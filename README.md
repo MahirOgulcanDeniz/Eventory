@@ -9,26 +9,26 @@ Eventory is an Inventory Management System developed using Python and PostgreSQL
 Download and install the following software from their official websites:
 
 1. **Python (3.10 or higher):**
-   * Download Link: [https://www.python.org/downloads/](https://www.python.org/downloads/)
-   * ⚠️ IMPORTANT: Ensure you check the "Add Python to PATH" checkbox during installation.
+   * Download Link: `https://www.python.org/downloads/`
+   * **⚠️ IMPORTANT:** Ensure you check the **"Add Python to PATH"** checkbox during installation.
 
 2. **PostgreSQL (Database):**
-   * Download Link: [https://www.postgresql.org/download/windows/](https://www.postgresql.org/download/windows/)
-   * Remember the password set during installation (default in the code is set to 123456; if you configure a different password, update the database configuration accordingly).
+   * Download Link: `https://www.postgresql.org/download/windows/`
+   * Remember the password set during installation (default in the code is set to `12345`; if you configure a different password, update the `DB_PASS` variable accordingly).
 
 3. **ZBar DLL File (For Barcode/QR Scanning):**
-   * Download libzbar-64.dll from the internet (or copy it from the existing project files).
-   * Place this file in the root directory where app.py and inventory.py are located.
+   * Download `libzbar-64.dll` from the internet (or copy it from the existing project files).
+   * Place this file in the root directory where `app.py` and `inventory.py` are located.
 
 ---
 
 ## 2. Database Setup (SQL)
 
-1. Open pgAdmin 4 on your machine.
-2. Right-click on Databases and select Create > Database.
-3. Name the database inventory_db and save it.
-4. Right-click on the newly created inventory_db and open the Query Tool.
-5. Copy and paste the entire SQL script below into the query tool and click the Execute (Play/▶) button:
+1. Open **pgAdmin 4** on your machine.
+2. Right-click on `Databases` and select **Create > Database**.
+3. Name the database `inventory_db` and save it.
+4. Right-click on the newly created `inventory_db` and open the **Query Tool**.
+5. Copy and paste the entire SQL script below into the query tool and click the **Execute (Play/▶)** button:
 
 ```sql
 -- 1. Inventory Stock Table
@@ -84,7 +84,6 @@ CREATE TABLE maintenance_items (
     project_source VARCHAR(255),
     date_added TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-
 3. Installation & Dependencies
 Install the required Python libraries to run the application.
 
