@@ -84,33 +84,51 @@ CREATE TABLE maintenance_items (
     project_source VARCHAR(255),
     date_added TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-3. Installation & Dependencies
+```
+
+---
+
+## 3. Installation & Dependencies
+
 Install the required Python libraries to run the application.
 
-Navigate to the project root directory, hold Shift + Right Click, and open PowerShell or Terminal.
+1. Navigate to the project root directory, hold **Shift + Right Click**, and open **PowerShell** or **Terminal**.
+2. Run the following command:
 
-Run the following command:
-
-
+```bash
 pip install PyQt5 qtawesome matplotlib reportlab qrcode[pil] opencv-python pyzbar psycopg2
-(Note: If you encounter an error installing psycopg2, try installing pip install psycopg2-binary instead.)
+```
 
-4. Running the Application
+*(Note: If you encounter an error installing `psycopg2`, try installing `pip install psycopg2-binary` instead.)*
+
+---
+
+## 4. Running the Application
+
 Once the configuration is complete, start the application using the following command:
 
-
+```bash
 python app.py
-5. Building an Executable (Optional)
-To generate a standalone .exe file for machines without Python installed:
+```
 
-Install PyInstaller:
+---
 
+## 5. Building an Executable (Optional)
 
+To generate a standalone `.exe` file for machines without Python installed:
+
+1. Install PyInstaller:
+```bash
 pip install pyinstaller
-Execute the following build command (Ensure your icon file is placed at icons/app_icon.ico):
+```
 
-
+2. Execute the following build command (Ensure your icon file is placed at `icons/app_icon.ico`):
+```bash
 python -m PyInstaller --noconsole --onedir --name="Eventory" --icon="icons/app_icon.ico" --add-data "icons;icons" --add-binary "libzbar-64.dll;." --hidden-import=cv2 --hidden-import=qrcode --hidden-import=psycopg2 --hidden-import=reportlab.platypus --hidden-import=reportlab.pdfbase --collect-all opencv_python --collect-all qtawesome app.py
-Once complete, you can find the executable inside the dist/Eventory directory.
+```
 
-⚠️ Configuration Note: Do not forget to update the SENDER_EMAIL and SENDER_PASSWORD fields in app.py with your Gmail address and Google App Password to enable email functionality.
+3. Once complete, you can find the executable inside the `dist/Eventory` directory.
+
+---
+
+**⚠️ Configuration Note:** Do not forget to update the `SENDER_EMAIL` and `SENDER_PASSWORD` fields in `app.py` with your Gmail address and Google App Password to enable email functionality.
