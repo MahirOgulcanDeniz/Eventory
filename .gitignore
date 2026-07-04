@@ -1,0 +1,7 @@
+__pycache__/
+build/
+dist/
+Qt5/
+venv/
+*.db
+*.spec
