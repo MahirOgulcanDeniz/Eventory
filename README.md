@@ -10,7 +10,7 @@ Download and install the following software from their official websites:
 
 1. **Python (3.10 or higher):**
    * Download Link: `https://www.python.org/downloads/`
-   * **⚠️ IMPORTANT:** Ensure you check the **"Add Python to PATH"** checkbox during installation.
+   * ** IMPORTANT:** Ensure you check the **"Add Python to PATH"** checkbox during installation.
 
 2. **PostgreSQL (Database):**
    * Download Link: `https://www.postgresql.org/download/windows/`
@@ -131,4 +131,4 @@ python -m PyInstaller --noconsole --onedir --name="Eventory" --icon="icons/app_i
 
 ---
 
-**⚠️ Configuration Note:** Do not forget to update the `SENDER_EMAIL` and `SENDER_PASSWORD` fields in `app.py` with your Gmail address and Google App Password to enable email functionality.
+**Configuration Note:** Do not forget to update the `SENDER_EMAIL` and `SENDER_PASSWORD` fields in `app.py` with your Gmail address and Google App Password to enable email functionality.
