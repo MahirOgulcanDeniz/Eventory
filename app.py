@@ -1,6 +1,8 @@
+import io
 import os
 import sys
 import smtplib
+import zipfile
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
@@ -20,7 +22,7 @@ qt_app_path = os.path.dirname(PyQt5.__file__)
 plugin_path = os.path.join(qt_app_path, "Qt5", "plugins")
 os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = plugin_path
 
-from PyQt5.QtCore import Qt, QDate, QSize, QTimer, QEvent, QSettings, pyqtSignal
+from PyQt5.QtCore import Qt, QDate, QSize, QSizeF, QTimer, QEvent, QSettings, pyqtSignal
 if hasattr(Qt, 'AA_EnableHighDpiScaling'):
     from PyQt5.QtWidgets import QApplication
     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
@@ -36,7 +38,12 @@ from PyQt5.QtWidgets import (
     QDateEdit, QListWidget, QListWidgetItem, QSpinBox, QStackedWidget,
     QCalendarWidget
 )
-from PyQt5.QtGui import QIcon, QFont, QPainter, QColor, QPen, QBrush, QIntValidator, QTextCharFormat
+
+from PIL import Image, ImageQt, ImageDraw
+import qrcode
+
+from PyQt5.QtGui import QIcon, QFont, QPainter, QColor, QPen, QBrush, QIntValidator, QTextCharFormat, QImage, QPixmap
+from PyQt5.QtPrintSupport import QPrinter, QPrintDialog
 
 import qtawesome as qta 
 import matplotlib.pyplot as plt
@@ -51,7 +58,7 @@ from inventory import (
     add_item, get_all_items, check_item_exists, get_item_project_info,
     create_project, get_active_projects,
     assign_item_to_project, get_project_items,
-    return_item_to_warehouse, close_project,
+    return_item_to_warehouse, transfer_item_between_projects, close_project,
     delete_item_from_warehouse, update_item_details,
     get_project_details, get_past_projects, get_archived_items,
     get_dashboard_stats, get_category_stats, update_project_full,
@@ -232,6 +239,43 @@ class ProjectAssignDialog(QDialog):
         else: QMessageBox.warning(self, "Uyarı", "Lütfen listeden bir proje seçin.")
     def get_selected_project(self): return self.combo.currentData()
 
+class ProjectTransferDialog(QDialog):
+    def __init__(self, qr_code, exclude_project_id=None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Başka Projeye Ata")
+        self.setMinimumSize(400, 250)
+        self.setWindowModality(Qt.ApplicationModal)
+        layout = QVBoxLayout()
+        layout.setSpacing(20)
+        info = QLabel(f"ÜRÜN:<br><br><b>{qr_code}</b><br><br>Hangi projeye aktarılacak?")
+        info.setAlignment(Qt.AlignCenter)
+        info.setStyleSheet("font-size: 16px; color: #2c3e50;")
+        layout.addWidget(info)
+        self.combo = QComboBox()
+        self.combo.addItem("Proje Seçiniz...", None)
+        try:
+            for pid, name in get_active_projects():
+                if pid != exclude_project_id:
+                    self.combo.addItem(name, pid)
+        except Exception:
+            pass
+        self.combo.setStyleSheet("padding: 10px; font-size: 16px;")
+        layout.addWidget(self.combo)
+        btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btn_box.accepted.connect(self.validate_and_accept)
+        btn_box.rejected.connect(self.reject)
+        layout.addWidget(btn_box)
+        self.setLayout(layout)
+
+    def validate_and_accept(self):
+        if self.combo.currentData():
+            self.accept()
+        else:
+            QMessageBox.warning(self, "Uyarı", "Lütfen listeden bir proje seçin.")
+
+    def get_selected_project(self):
+        return self.combo.currentData()
+
 class BulkScanDialog(QDialog):
     def __init__(self, project_id, project_name, mode='assign', parent=None):
         super().__init__(parent)
@@ -273,38 +317,214 @@ class BulkScanDialog(QDialog):
         self.log_list.insertItem(0, item) 
 
 class QRGeneratorDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent); self.setWindowTitle("Toplu QR Kod Oluşturucu"); self.setMinimumSize(400, 300)
-        layout = QFormLayout(); layout.setSpacing(15)
-        self.prefix_input = QLineEdit(); self.prefix_input.setPlaceholderText("Örn: PC-")
-        self.start_num_input = QSpinBox(); self.start_num_input.setRange(1, 999999); self.start_num_input.setValue(1)
-        self.count_input = QSpinBox(); self.count_input.setRange(1, 1000); self.count_input.setValue(10)
-        gen_btn = QPushButton("Oluştur ve Kaydet"); gen_btn.setMinimumHeight(45); gen_btn.setIcon(qta.icon('fa5s.save', color='black'))
-        gen_btn.clicked.connect(self.generate_qrs)
-        layout.addRow("Ön Ek (Prefix):", self.prefix_input); layout.addRow("Başlangıç No:", self.start_num_input)
-        layout.addRow("Kaç Adet:", self.count_input); layout.addRow("", gen_btn); self.setLayout(layout)
-    def generate_qrs(self):
-        import qrcode
-        from PIL import Image, ImageDraw, ImageFont
-        prefix = self.prefix_input.text(); start = self.start_num_input.value(); count = self.count_input.value()
-        folder = QFileDialog.getExistingDirectory(self, "Klasör Seç"); 
-        if not folder: return
+    def __init__(self, parent=None, item_data=None, docx_path="Argox_60x30_Logo_QR_Sablon_2.docx"):
+        super().__init__(parent)
+        self.setWindowTitle("Argox 60x30 mm Etiket Oluşturucu")
+        self.setFixedSize(380, 240)
+        self.docx_path = docx_path
+        
+        self.initial_text = item_data if isinstance(item_data, str) else ""
+
+        self.init_ui()
+
+    def find_docx_file(self):
+        """Word şablon dosyasını proje yollarında otomatik arar."""
+        base_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
+        candidates = [
+            self.docx_path,
+            os.path.join(base_dir, self.docx_path),
+            os.path.join(base_dir, "Argox_60x30_Logo_QR_Sablon_2.docx"),
+            "Argox_60x30_Logo_QR_Sablon_2.docx"
+        ]
+        for p in candidates:
+            if os.path.exists(p):
+                return p
+        
+        for f in os.listdir(base_dir):
+            if f.endswith(".docx") and not f.startswith("~$"):
+                return os.path.join(base_dir, f)
+        return None
+
+    def extract_logo_from_docx(self):
+        """Docx içerisindeki gömülü logoyu ayıklar."""
+        path = self.find_docx_file()
+        if not path:
+            return None
         try:
-            for i in range(count):
-                num = start + i; code_text = f"{prefix}{str(num).zfill(3)}"
-                qr = qrcode.QRCode(box_size=10, border=2); qr.add_data(code_text); qr.make(fit=True)
-                qr_img = qr.make_image(fill_color="black", back_color="white").convert('RGB')
-                width, height = qr_img.size; extra_height = 50 
-                new_img = Image.new('RGB', (width, height + extra_height), 'white'); new_img.paste(qr_img, (0, 0))
-                draw = ImageDraw.Draw(new_img)
-                try: font = ImageFont.truetype("arial.ttf", 26)
-                except: font = ImageFont.load_default()
-                bbox = draw.textbbox((0, 0), code_text, font=font); text_w = bbox[2] - bbox[0]
-                text_x = (width - text_w) / 2; text_y = height + (extra_height - (bbox[3] - bbox[1])) / 2 - 5 
-                draw.text((text_x, text_y), code_text, fill="black", font=font)
-                new_img.save(os.path.join(folder, f"{code_text}.png"))
-            QMessageBox.information(self, "Başarılı", f"{count} adet QR oluşturuldu!"); self.accept()
-        except Exception as e: QMessageBox.critical(self, "Hata", str(e))
+            with zipfile.ZipFile(path, 'r') as z:
+                for file_info in z.infolist():
+                    if file_info.filename.startswith('word/media/'):
+                        image_data = z.read(file_info.filename)
+                        return Image.open(io.BytesIO(image_data)).convert("RGBA")
+        except Exception as e:
+            print(f"Docx okuma hatası: {e}")
+        return None
+
+    def init_ui(self):
+        layout = QVBoxLayout()
+        form_layout = QFormLayout()
+
+        # 1. Ürün Adı / Önek
+        self.txt_prefix = QLineEdit()
+        self.txt_prefix.setText(self.initial_text)
+        form_layout.addRow("Ürün Adı / Kod Öneki:", self.txt_prefix)
+
+        # 2. Kaç Adet
+        self.spn_count = QSpinBox()
+        self.spn_count.setRange(1, 1000)
+        self.spn_count.setValue(1)
+        form_layout.addRow("Kaç Adet Basılacak:", self.spn_count)
+
+        # 3. Başlangıç Numarası
+        self.spn_start = QSpinBox()
+        self.spn_start.setRange(1, 999999)
+        self.spn_start.setValue(1)
+        form_layout.addRow("Başlangıç Numarası:", self.spn_start)
+
+        layout.addLayout(form_layout)
+        layout.addStretch()
+
+        # Buton Grubu
+        btn_layout = QHBoxLayout()
+        
+        self.btn_print = QPushButton("Oluştur ve Yazdır")
+        self.btn_print.setStyleSheet("""
+            QPushButton {
+                background-color: #27ae60; color: white; 
+                font-weight: bold; padding: 10px; border-radius: 4px;
+            }
+            QPushButton:hover { background-color: #219150; }
+        """)
+        self.btn_print.clicked.connect(self.print_labels)
+        
+        self.btn_save = QPushButton("Kaydet")
+        self.btn_save.setStyleSheet("""
+            QPushButton {
+                background-color: #2980b9; color: white; 
+                font-weight: bold; padding: 10px; border-radius: 4px;
+            }
+            QPushButton:hover { background-color: #1c5980; }
+        """)
+        self.btn_save.clicked.connect(self.save_labels)
+
+        btn_layout.addWidget(self.btn_print)
+        btn_layout.addWidget(self.btn_save)
+        layout.addLayout(btn_layout)
+
+        self.setLayout(layout)
+
+    def generate_single_label(self, text):
+        """Logoyu sol tarafa, QR kodu ve ortalanmış metni sağ tarafa yerleştirir."""
+        width_px, height_px = 600, 300 # Argox 60x30 mm
+        canvas = Image.new('RGB', (width_px, height_px), 'white')
+
+        # Sol Taraf: Logo
+        logo = self.extract_logo_from_docx()
+        if logo:
+            logo.thumbnail((260, 260), Image.Resampling.LANCZOS)
+            logo_y = (height_px - logo.height) // 2
+            canvas.paste(logo, (20, logo_y), mask=logo if logo.mode == 'RGBA' else None)
+        else:
+            draw = ImageDraw.Draw(canvas)
+            draw.text((20, 140), "SABLON BULUNAMADI", fill="red")
+
+        # Sağ Taraf: QR Kod ve Ortalanmış Metin
+        if text:
+            qr = qrcode.QRCode(
+                version=1,
+                error_correction=qrcode.constants.ERROR_CORRECT_M,
+                box_size=8,
+                border=1,
+            )
+            qr.add_data(text)
+            qr.make(fit=True)
+            qr_img = qr.make_image(fill_color="black", back_color="white").convert("RGB")
+            qr_size = 210
+            qr_img = qr_img.resize((qr_size, qr_size), Image.Resampling.LANCZOS)
+            
+            qr_x = 350
+            qr_y = 15
+            canvas.paste(qr_img, (qr_x, qr_y))
+
+            # Metni QR Kodunun Altına Tam Ortala
+            draw = ImageDraw.Draw(canvas)
+            text_str = str(text)[:20]
+            
+            # Yazı genişliğini hesaplama
+            bbox = draw.textbbox((0, 0), text_str)
+            text_w = bbox[2] - bbox[0]
+            
+            # QR kodun merkez noktasında yazıyı ortalama
+            text_x = qr_x + (qr_size - text_w) // 2
+            text_y = qr_y + qr_size + 10
+            
+            draw.text((text_x, text_y), text_str, fill="black")
+
+        return canvas
+
+    def get_code_list(self):
+        """Önek ve numarayı birleştirerek 'deneme1', 'deneme2' şeklinde liste üretir."""
+        prefix = self.txt_prefix.text().strip()
+        count = self.spn_count.value()
+        start = self.spn_start.value()
+        
+        codes = []
+        for i in range(count):
+            num = start + i
+            if prefix:
+                codes.append(f"{prefix}{num}")
+            else:
+                codes.append(str(num))
+        return codes
+
+    def save_labels(self):
+        codes = self.get_code_list()
+        if not codes:
+            return
+
+        if len(codes) == 1:
+            default_name = f"etiket_{codes[0]}.png"
+            file_path, _ = QFileDialog.getSaveFileName(self, "Etiketi Kaydet", default_name, "PNG (*.png)")
+            if file_path:
+                img = self.generate_single_label(codes[0])
+                img.save(file_path)
+                QMessageBox.information(self, "Başarılı", f"Etiket kaydedildi:\n{file_path}")
+        else:
+            folder = QFileDialog.getExistingDirectory(self, "Etiketlerin Kaydedileceği Klasörü Seçin")
+            if folder:
+                for code in codes:
+                    img = self.generate_single_label(code)
+                    img.save(os.path.join(folder, f"etiket_{code}.png"))
+                QMessageBox.information(self, "Başarılı", f"{len(codes)} adet etiket klasöre kaydedildi.")
+
+    def print_labels(self):
+        codes = self.get_code_list()
+        if not codes:
+            return
+
+        printer = QPrinter(QPrinter.HighResolution)
+        printer.setPaperSize(QSizeF(60, 30), QPrinter.Millimeter)
+        
+        print_dialog = QPrintDialog(printer, self)
+        if print_dialog.exec_() == QPrintDialog.Accepted:
+            painter = QPainter(printer)
+            
+            for index, code in enumerate(codes):
+                if index > 0:
+                    printer.newPage()
+                
+                pil_img = self.generate_single_label(code)
+                buffer = io.BytesIO()
+                pil_img.save(buffer, format="PNG")
+                pixmap = QPixmap()
+                pixmap.loadFromData(buffer.getvalue())
+                
+                rect = painter.viewport()
+                scaled_pixmap = pixmap.scaled(rect.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                painter.drawPixmap(rect.x(), rect.y(), scaled_pixmap)
+                
+            painter.end()
+            QMessageBox.information(self, "Bilgi", f"{len(codes)} adet etiket yazıcıya gönderildi.")
 
 class DashboardWidget(QWidget):
     def __init__(self):
@@ -583,7 +803,7 @@ class InventoryApp(QWidget):
             label_widget.setStyleSheet("color: #2c3e50; font-size: 14px; font-weight: bold;"); v_lay.addWidget(title_lbl); v_lay.addWidget(label_widget); return v_lay
         self.lbl_p_user = QLabel("-"); self.lbl_p_date = QLabel("-"); self.lbl_p_desc = QLabel("-"); self.lbl_p_desc.setWordWrap(True)
         main_info_layout.addLayout(create_info_col("Hazırlayan", self.lbl_p_user)); main_info_layout.addLayout(create_info_col("Tarih Aralığı", self.lbl_p_date)); main_info_layout.addLayout(create_info_col("Notlar", self.lbl_p_desc)); main_info_layout.addStretch()
-        self.p_table = QTableWidget(); self.p_table.setColumnCount(5); self.p_table.setHorizontalHeaderLabels(["QR", "Ürün", "Adet", "İade", "Arızalı İade"]); self.p_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch); self.p_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents); self.p_table.setFocusPolicy(Qt.NoFocus)
+        self.p_table = QTableWidget(); self.p_table.setColumnCount(6); self.p_table.setHorizontalHeaderLabels(["QR", "Ürün", "Adet", "İade", "Projeye Ata", "Arızalı İade"]); self.p_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch); self.p_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents); self.p_table.setFocusPolicy(Qt.NoFocus)
         layout.addLayout(top_bar); layout.addWidget(self.info_frame); layout.addWidget(self.p_table); page.setLayout(layout); return page
 
     def setup_history_page(self):
@@ -819,11 +1039,17 @@ class InventoryApp(QWidget):
             btn_ret.clicked.connect(lambda _, row=r: self.ret_item(row))
             self.p_table.setCellWidget(r, 3, btn_ret)
 
+            btn_transfer = QPushButton(" Projeye Ata")
+            btn_transfer.setIcon(qta.icon('fa5s.exchange-alt', color='white'))
+            btn_transfer.setObjectName("secondary_btn")
+            btn_transfer.clicked.connect(lambda _, row=r: self.transfer_to_project(row))
+            self.p_table.setCellWidget(r, 4, btn_transfer)
+
             btn_faulty = QPushButton(" Arızalı")
             btn_faulty.setIcon(qta.icon('fa5s.tools', color='white'))
             btn_faulty.setObjectName("danger_btn")
             btn_faulty.clicked.connect(lambda _, row=r: self.return_faulty_item(row))
-            self.p_table.setCellWidget(r, 4, btn_faulty)
+            self.p_table.setCellWidget(r, 5, btn_faulty)
 
     def ret_item(self, r):
         qr = self.p_table.item(r, 0).text()
@@ -836,6 +1062,29 @@ class InventoryApp(QWidget):
                 self.load_project_items()
                 QMessageBox.information(self, "Başarılı", f"{count} adet '{qr}' depoya iade alındı.")
             except Exception as e: QMessageBox.critical(self, "Hata", str(e))
+
+    def transfer_to_project(self, r):
+        qr = self.p_table.item(r, 0).text()
+        current_qty = int(self.p_table.item(r, 2).text())
+        from_pid = self.p_combo.currentData()
+        count, ok = QInputDialog.getInt(
+            self, "Transfer İşlemi",
+            f"Toplam {current_qty} adet var.\nKaç adet başka projeye aktarılacak?",
+            1, 1, current_qty, 1
+        )
+        if not ok:
+            return
+        dialog = ProjectTransferDialog(qr, exclude_project_id=from_pid, parent=self)
+        if dialog.exec_():
+            to_pid = dialog.get_selected_project()
+            if to_pid:
+                try:
+                    transfer_item_between_projects(from_pid, to_pid, qr, count)
+                    self.load_project_items()
+                    to_name = next((n for p, n in get_active_projects() if p == to_pid), "")
+                    QMessageBox.information(self, "Başarılı", f"{count} adet '{qr}' '{to_name}' projesine aktarıldı.")
+                except Exception as e:
+                    QMessageBox.critical(self, "Hata", str(e))
 
     def return_faulty_item(self, r):
         qr = self.p_table.item(r, 0).text()

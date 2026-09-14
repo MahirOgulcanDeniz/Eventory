@@ -124,7 +124,7 @@ pip install pyinstaller
 
 2. Execute the following build command (Ensure your icon file is placed at `icons/app_icon.ico`):
 ```bash
-python -m PyInstaller --noconsole --onedir --name="Eventory" --icon="icons/app_icon.ico" --add-data "icons;icons" --add-binary "libzbar-64.dll;." --hidden-import=cv2 --hidden-import=qrcode --hidden-import=psycopg2 --hidden-import=reportlab.platypus --hidden-import=reportlab.pdfbase --collect-all opencv_python --collect-all qtawesome app.py
+python -m PyInstaller --noconsole --onedir --name="Eventory" --icon="icons/app_icon.ico" --add-data "icons;icons" --add-data "templates;templates" --add-binary "libzbar-64.dll;." --hidden-import=cv2 --hidden-import=qrcode --hidden-import=psycopg2 --hidden-import=reportlab.platypus --hidden-import=reportlab.pdfbase --collect-all opencv_python --collect-all qtawesome app.py
 ```
 
 3. Once complete, you can find the executable inside the `dist/Eventory` directory.

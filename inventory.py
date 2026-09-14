@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 DB_HOST = "localhost"
 DB_NAME = "inventory_db" 
 DB_USER = "postgres"
-DB_PASS = "your_password_here" 
+DB_PASS = "12345" 
 
 def get_db_connection():
     try:
@@ -229,6 +229,32 @@ def return_item_to_warehouse(project_id, qr_code):
             cur.execute("INSERT INTO items (qr_code, description, category, quantity) VALUES (%s, %s, %s, %s)", (qr_code, desc, "Diğer", 1))
         
         cur.execute("INSERT INTO archived_items (project_id, qr_code, description, category, added_date, returned_date) VALUES (%s, %s, %s, %s, NOW(), NOW())", (project_id, qr_code, desc, "Diğer"))
+        conn.commit()
+    except Exception as e:
+        conn.rollback(); raise e
+    finally:
+        conn.close()
+
+def transfer_item_between_projects(from_project_id, to_project_id, qr_code, count=1):
+    if from_project_id == to_project_id:
+        raise Exception("Kaynak ve hedef proje aynı olamaz.")
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT ctid, description FROM project_items WHERE project_id = %s AND qr_code = %s LIMIT %s",
+            (from_project_id, qr_code, count)
+        )
+        rows = cur.fetchall()
+        if len(rows) < count:
+            raise Exception(f"Yetersiz adet! Mevcut: {len(rows)}")
+
+        for row_id, desc in rows:
+            cur.execute("DELETE FROM project_items WHERE ctid = %s", (row_id,))
+            cur.execute(
+                "INSERT INTO project_items (project_id, qr_code, description) VALUES (%s, %s, %s)",
+                (to_project_id, qr_code, desc)
+            )
         conn.commit()
     except Exception as e:
         conn.rollback(); raise e
