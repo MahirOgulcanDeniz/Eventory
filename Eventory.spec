@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('icons', 'icons')]
+datas = [('icons', 'icons'), ('templates', 'templates')]
 binaries = [('libzbar-64.dll', '.')]
 hiddenimports = ['cv2', 'qrcode', 'psycopg2', 'reportlab.platypus', 'reportlab.pdfbase']
 tmp_ret = collect_all('opencv_python')
@@ -41,7 +41,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['icons\\app_icon.ico'],
+    icon=['icons/app_icon.ico'],
 )
 coll = COLLECT(
     exe,

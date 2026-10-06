@@ -3,6 +3,8 @@ import os
 import sys
 import smtplib
 import zipfile
+from docx import Document
+from docx.shared import Cm, Pt
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
@@ -39,7 +41,7 @@ from PyQt5.QtWidgets import (
     QCalendarWidget
 )
 
-from PIL import Image, ImageQt, ImageDraw
+from PIL import Image, ImageQt, ImageDraw, ImageFont
 import qrcode
 
 from PyQt5.QtGui import QIcon, QFont, QPainter, QColor, QPen, QBrush, QIntValidator, QTextCharFormat, QImage, QPixmap
@@ -319,30 +321,48 @@ class BulkScanDialog(QDialog):
 class QRGeneratorDialog(QDialog):
     def __init__(self, parent=None, item_data=None, docx_path="Argox_60x30_Logo_QR_Sablon_2.docx"):
         super().__init__(parent)
-        self.setWindowTitle("Argox 60x30 mm Etiket Oluşturucu")
+        self.setWindowTitle("6.25x3 cm Etiket Oluşturucu (Word / Argox)")
         self.setFixedSize(380, 240)
         self.docx_path = docx_path
         
         self.initial_text = item_data if isinstance(item_data, str) else ""
-
         self.init_ui()
 
     def find_docx_file(self):
-        """Word şablon dosyasını proje yollarında otomatik arar."""
-        base_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
-        candidates = [
-            self.docx_path,
-            os.path.join(base_dir, self.docx_path),
-            os.path.join(base_dir, "Argox_60x30_Logo_QR_Sablon_2.docx"),
-            "Argox_60x30_Logo_QR_Sablon_2.docx"
-        ]
-        for p in candidates:
-            if os.path.exists(p):
-                return p
-        
-        for f in os.listdir(base_dir):
-            if f.endswith(".docx") and not f.startswith("~$"):
-                return os.path.join(base_dir, f)
+        """Word şablon dosyasını PyInstaller EXE dizinlerinde ve çalışma yollarında arar."""
+        search_paths = []
+
+        # 1. PyInstaller ile derlenmiş EXE ortamı kontrolleri
+        if getattr(sys, 'frozen', False):
+            if hasattr(sys, '_MEIPASS'):
+                search_paths.append(os.path.join(sys._MEIPASS, self.docx_path))
+            
+            exe_dir = os.path.dirname(sys.executable)
+            search_paths.append(os.path.join(exe_dir, self.docx_path))
+            search_paths.append(os.path.join(exe_dir, "Argox_60x30_Logo_QR_Sablon_2.docx"))
+            search_paths.append(os.path.join(exe_dir, "label_template.docx"))
+        else:
+            base_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
+            search_paths.append(os.path.join(base_dir, self.docx_path))
+            search_paths.append(os.path.join(base_dir, "Argox_60x30_Logo_QR_Sablon_2.docx"))
+            search_paths.append(os.path.join(base_dir, "label_template.docx"))
+
+        # 2. Doğrudan dosya adı ve çalışma dizini kontrolleri
+        search_paths.append(os.path.abspath(self.docx_path))
+        search_paths.append(os.path.join(os.getcwd(), self.docx_path))
+
+        for path in search_paths:
+            if path and os.path.exists(path):
+                return path
+
+        # Belirtilen isim bulunamadıysa dizindeki ilk geçerli .docx dosyasını al
+        check_dirs = set([os.path.dirname(p) for p in search_paths if p and os.path.dirname(p)])
+        for d in check_dirs:
+            if os.path.exists(d):
+                for f in os.listdir(d):
+                    if f.endswith(".docx") and not f.startswith("~$"):
+                        return os.path.join(d, f)
+
         return None
 
     def extract_logo_from_docx(self):
@@ -384,7 +404,7 @@ class QRGeneratorDialog(QDialog):
         layout.addLayout(form_layout)
         layout.addStretch()
 
-        # Buton Grubu
+        # Butonlar
         btn_layout = QHBoxLayout()
         
         self.btn_print = QPushButton("Oluştur ve Yazdır")
@@ -397,7 +417,7 @@ class QRGeneratorDialog(QDialog):
         """)
         self.btn_print.clicked.connect(self.print_labels)
         
-        self.btn_save = QPushButton("Kaydet")
+        self.btn_save = QPushButton("Word (.docx) Olarak Kaydet")
         self.btn_save.setStyleSheet("""
             QPushButton {
                 background-color: #2980b9; color: white; 
@@ -413,12 +433,12 @@ class QRGeneratorDialog(QDialog):
 
         self.setLayout(layout)
 
-    def generate_single_label(self, text):
-        """Logoyu sol tarafa, QR kodu ve ortalanmış metni sağ tarafa yerleştirir."""
-        width_px, height_px = 600, 300 # Argox 60x30 mm
+    def generate_single_label_image(self, text):
+        """Etiket görselini oluşturur (625x300 px - 6.25x3 cm oranı)."""
+        width_px, height_px = 625, 300
         canvas = Image.new('RGB', (width_px, height_px), 'white')
 
-        # Sol Taraf: Logo
+        # Logo
         logo = self.extract_logo_from_docx()
         if logo:
             logo.thumbnail((260, 260), Image.Resampling.LANCZOS)
@@ -428,7 +448,7 @@ class QRGeneratorDialog(QDialog):
             draw = ImageDraw.Draw(canvas)
             draw.text((20, 140), "SABLON BULUNAMADI", fill="red")
 
-        # Sağ Taraf: QR Kod ve Ortalanmış Metin
+        # QR ve Metin
         if text:
             qr = qrcode.QRCode(
                 version=1,
@@ -439,31 +459,77 @@ class QRGeneratorDialog(QDialog):
             qr.add_data(text)
             qr.make(fit=True)
             qr_img = qr.make_image(fill_color="black", back_color="white").convert("RGB")
-            qr_size = 210
-            qr_img = qr_img.resize((qr_size, qr_size), Image.Resampling.LANCZOS)
             
-            qr_x = 350
+            # QR Kod Boyutu ve Konumu
+            qr_size = 200
+            qr_img = qr_img.resize((qr_size, qr_size), Image.Resampling.LANCZOS)
+            qr_x = 380
             qr_y = 15
             canvas.paste(qr_img, (qr_x, qr_y))
 
-            # Metni QR Kodunun Altına Tam Ortala
             draw = ImageDraw.Draw(canvas)
             text_str = str(text)[:20]
-            
-            # Yazı genişliğini hesaplama
-            bbox = draw.textbbox((0, 0), text_str)
+
+            # Büyütülmüş Font Ayarı (28 pt)
+            try:
+                font = ImageFont.truetype("arial.ttf", 28)
+            except:
+                font = ImageFont.load_default()
+
+            # Yazıyı QR Kodun Altına Ortala
+            bbox = draw.textbbox((0, 0), text_str, font=font)
             text_w = bbox[2] - bbox[0]
             
-            # QR kodun merkez noktasında yazıyı ortalama
             text_x = qr_x + (qr_size - text_w) // 2
-            text_y = qr_y + qr_size + 10
+            text_y = qr_y + qr_size + 8
             
-            draw.text((text_x, text_y), text_str, fill="black")
+            draw.text((text_x, text_y), text_str, fill="black", font=font)
 
         return canvas
 
+    def build_docx_document(self, codes):
+        """6.25 x 3.0 cm Özel Boyutlu Word Belgesi Oluşturur."""
+        doc = Document()
+        
+        for idx, code in enumerate(codes):
+            # İlk sayfa için mevcut bölümü, sonraki sayfalar için yeni bölümü kullan
+            if idx == 0:
+                section = doc.sections[0]
+            else:
+                section = doc.add_section()
+
+            # 6.25 cm x 3.0 cm Tam Sayfa Boyutu ve Sıfır Kenar Boşluğu
+            section.page_width = Cm(6.25)
+            section.page_height = Cm(3.0)
+            section.top_margin = Cm(0)
+            section.bottom_margin = Cm(0)
+            section.left_margin = Cm(0)
+            section.right_margin = Cm(0)
+
+            # Geçici Görsel Oluştur
+            pil_img = self.generate_single_label_image(code)
+            temp_path = f"temp_label_{idx}.png"
+            pil_img.save(temp_path)
+
+            # IndexError önleyen güvenli paragraf seçimi
+            if idx == 0 and len(doc.paragraphs) > 0:
+                p = doc.paragraphs[0]
+            else:
+                p = doc.add_paragraph()
+
+            p.paragraph_format.space_before = Pt(0)
+            p.paragraph_format.space_after = Pt(0)
+            p.paragraph_format.line_spacing = 1
+            
+            run = p.add_run()
+            run.add_picture(temp_path, width=Cm(6.25), height=Cm(3.0))
+
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+        return doc
+
     def get_code_list(self):
-        """Önek ve numarayı birleştirerek 'deneme1', 'deneme2' şeklinde liste üretir."""
         prefix = self.txt_prefix.text().strip()
         count = self.spn_count.value()
         start = self.spn_start.value()
@@ -471,10 +537,7 @@ class QRGeneratorDialog(QDialog):
         codes = []
         for i in range(count):
             num = start + i
-            if prefix:
-                codes.append(f"{prefix}{num}")
-            else:
-                codes.append(str(num))
+            codes.append(f"{prefix}{num}" if prefix else str(num))
         return codes
 
     def save_labels(self):
@@ -482,49 +545,31 @@ class QRGeneratorDialog(QDialog):
         if not codes:
             return
 
-        if len(codes) == 1:
-            default_name = f"etiket_{codes[0]}.png"
-            file_path, _ = QFileDialog.getSaveFileName(self, "Etiketi Kaydet", default_name, "PNG (*.png)")
-            if file_path:
-                img = self.generate_single_label(codes[0])
-                img.save(file_path)
-                QMessageBox.information(self, "Başarılı", f"Etiket kaydedildi:\n{file_path}")
-        else:
-            folder = QFileDialog.getExistingDirectory(self, "Etiketlerin Kaydedileceği Klasörü Seçin")
-            if folder:
-                for code in codes:
-                    img = self.generate_single_label(code)
-                    img.save(os.path.join(folder, f"etiket_{code}.png"))
-                QMessageBox.information(self, "Başarılı", f"{len(codes)} adet etiket klasöre kaydedildi.")
+        default_name = f"etiketler_{codes[0]}.docx"
+        file_path, _ = QFileDialog.getSaveFileName(self, "Word Etiket Belgesini Kaydet", default_name, "Word Dosyası (*.docx)")
+        
+        if file_path:
+            doc = self.build_docx_document(codes)
+            doc.save(file_path)
+            QMessageBox.information(self, "Başarılı", f"6.25x3 cm boyutunda Word belgesi oluşturuldu:\n{file_path}")
 
     def print_labels(self):
         codes = self.get_code_list()
         if not codes:
             return
 
-        printer = QPrinter(QPrinter.HighResolution)
-        printer.setPaperSize(QSizeF(60, 30), QPrinter.Millimeter)
-        
-        print_dialog = QPrintDialog(printer, self)
-        if print_dialog.exec_() == QPrintDialog.Accepted:
-            painter = QPainter(printer)
-            
-            for index, code in enumerate(codes):
-                if index > 0:
-                    printer.newPage()
-                
-                pil_img = self.generate_single_label(code)
-                buffer = io.BytesIO()
-                pil_img.save(buffer, format="PNG")
-                pixmap = QPixmap()
-                pixmap.loadFromData(buffer.getvalue())
-                
-                rect = painter.viewport()
-                scaled_pixmap = pixmap.scaled(rect.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                painter.drawPixmap(rect.x(), rect.y(), scaled_pixmap)
-                
-            painter.end()
-            QMessageBox.information(self, "Bilgi", f"{len(codes)} adet etiket yazıcıya gönderildi.")
+        temp_docx = os.path.join(os.getcwd(), "temp_print_labels.docx")
+        doc = self.build_docx_document(codes)
+        doc.save(temp_docx)
+
+        try:
+            if sys.platform == "win32":
+                os.startfile(temp_docx, "print")
+                QMessageBox.information(self, "Bilgi", f"{len(codes)} adet 6.25x3 cm etiket Word üzerinden Argox yazıcıya gönderildi.")
+            else:
+                QMessageBox.warning(self, "Hata", "Doğrudan yazdırma sadece Windows işletim sisteminde desteklenmektedir.")
+        except Exception as e:
+            QMessageBox.critical(self, "Yazdırma Hatası", f"Yazdırılırken bir sorun oluştu:\n{e}")
 
 class DashboardWidget(QWidget):
     def __init__(self):

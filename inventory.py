@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 DB_HOST = "localhost"
 DB_NAME = "inventory_db" 
 DB_USER = "postgres"
-DB_PASS = "12345" 
+DB_PASS = "123456" 
 
 def get_db_connection():
     try:
